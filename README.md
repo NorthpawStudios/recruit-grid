@@ -1,4 +1,6 @@
 # Rapid Recruitment Web Table
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 
 A performance-first recruitment database demo. Streams **250k+ candidates** from a FastAPI backend in **Apache Arrow** format, then does **multithreaded filtering/sorting** in a Web Worker using a **SharedArrayBuffer**, while a **virtualized React grid** renders at 60–120 FPS.
 
