@@ -1,4 +1,4 @@
-# ⚡ Recruit Grid
+# Recruit Grid
 
 A performance-first recruitment database demo. Streams **250k+ candidates** from a FastAPI backend in **Apache Arrow** format, then does **multithreaded filtering/sorting** in a Web Worker using a **SharedArrayBuffer**, while a **virtualized React grid** renders at 60–120 FPS.
 
@@ -6,7 +6,7 @@ A performance-first recruitment database demo. Streams **250k+ candidates** from
 
 ---
 
-## 🚀 Highlights
+## Highlights
 - **Arrow over JSON** → tiny payloads, zero JSON parsing overhead.
 - **Web Worker + SharedArrayBuffer** → filter/sort off the main thread (no jank).
 - **Virtualized DOM grid** → render cost ~O(1) regardless of dataset size.
@@ -14,14 +14,14 @@ A performance-first recruitment database demo. Streams **250k+ candidates** from
 
 ---
 
-## 🧩 Stack
+## Stack
 - **Backend:** Python 3.11+, FastAPI, PyArrow  
 - **Frontend:** React + TypeScript (Vite), `apache-arrow`  
 - **Perf tricks:** SharedArrayBuffer, background compute, DOM virtualization
 
 ---
 
-## �� Benchmarks (local, M1/M2 laptop)
+## Benchmarks (local, M1/M2 laptop)
 | Operation | Result (example) |
 |---|---|
 | Initial load (250k rows) | ~1–2s (first run, then cached) |
@@ -33,7 +33,7 @@ A performance-first recruitment database demo. Streams **250k+ candidates** from
 
 ---
 
-## 📦 Run locally
+## Run locally
 
 ### 1) Backend
 ```bash
