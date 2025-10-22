@@ -1,7 +1,11 @@
 import * as arrow from 'apache-arrow'
 
-export async function fetchArrow(url: string): Promise<arrow.Table> {
-  const res = await fetch(url, { credentials: 'omit' })
+// 👇 Base API URL – switches automatically based on environment
+const API = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+
+export async function fetchArrow(urlPath: string): Promise<arrow.Table> {
+  // Prefix the path with API base
+  const res = await fetch(`${API}${urlPath}`, { credentials: 'omit' })
   const buf = await res.arrayBuffer()
   return arrow.tableFromIPC(new Uint8Array(buf))
 }

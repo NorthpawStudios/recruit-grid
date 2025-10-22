@@ -19,7 +19,7 @@ export default function App() {
   // initial load: fetch Arrow -> prep columns -> init worker
   useEffect(() => {
     (async () => {
-      const table = await fetchArrow('http://localhost:8000/candidates.arrow')
+      const table = await fetchArrow('/candidates.arrow')
       const cols = columns(table)
       colsRef.current = {
         years: cols.years,
