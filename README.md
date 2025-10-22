@@ -12,6 +12,9 @@ A performance-first recruitment database demo. Streams **250k+ candidates** from
 - **Virtualized DOM grid** → render cost ~O(1) regardless of dataset size.
 - **FastAPI** backend with a pre-generated Arrow snapshot for fast first paint.
 
+##Vercel Demo
+- https://recruit-grid.vercel.app/
+
 ---
 
 ## Stack
