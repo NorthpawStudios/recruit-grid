@@ -1,45 +1,75 @@
-import { useEffect, useRef, useState } from 'react'
-import { fetchArrow, columns } from './arrow'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { fetchArrowBuffer } from './arrow'
 import VirtualGrid from './grid/VirtualGrid'
-import workerUrl from './worker/dataWorker?worker&url'
+import DataWorker from './worker/dataWorker?worker'
+import type { ResultMessage, SortKey } from './worker/dataWorker'
+import * as arrow from 'apache-arrow'
 
-type SortKey = 'comp' | 'years' | 'name' | '-comp' | '-years' | '-name'
 type Query = { q?: string; minExp?: number; location?: string; sort?: SortKey }
+
+/** Display columns, decoded lazily per visible row straight from Arrow buffers. */
+type DisplayCols = {
+  name: arrow.Vector
+  title: arrow.Vector
+  location: arrow.Vector
+  skills: arrow.Vector
+  years: Int8Array
+  comp: Int32Array
+}
 
 export default function App() {
   const [ready, setReady] = useState(false)
   const [count, setCount] = useState(0)
+  const [queryMs, setQueryMs] = useState<number | null>(null)
   const [query, setQuery] = useState<Query>({})
 
-  const colsRef = useRef<Record<string, unknown> | null>(null)
+  const colsRef = useRef<DisplayCols | null>(null)
   const indicesRef = useRef<Uint32Array | null>(null)
+  const offsetRef = useRef(0)
   const workerRef = useRef<Worker | null>(null)
+  const latestVersion = useRef(0)
 
-
-  // initial load: fetch Arrow -> prep columns -> init worker
+  // initial load: fetch Arrow once, parse on the main thread for display,
+  // and hand the same bytes to the worker (transferred, not copied).
   useEffect(() => {
-    (async () => {
-      const table = await fetchArrow('/candidates.arrow')
-      const cols = columns(table)
+    let cancelled = false
+    ;(async () => {
+      const buffer = await fetchArrowBuffer('/candidates.arrow')
+      if (cancelled) return
+
+      // Parse for display. Arrow vectors decode strings on demand, so this is
+      // cheap: no upfront materialization of 1.5M strings.
+      const table = arrow.tableFromIPC(new Uint8Array(buffer.slice(0)))
       colsRef.current = {
-        years: cols.years,
-        comp: cols.comp,
-        name: Array.from({ length: table.numRows }, (_, i) => cols.name.get(i)?.toString() ?? ''),
-        title: Array.from({ length: table.numRows }, (_, i) => cols.title.get(i)?.toString() ?? ''),
-        location: Array.from({ length: table.numRows }, (_, i) => cols.location.get(i)?.toString() ?? ''),
-        skills: Array.from({ length: table.numRows }, (_, i) => cols.skills.get(i)?.toString() ?? ''),
+        name: table.getChild('name')!,
+        title: table.getChild('title')!,
+        location: table.getChild('location')!,
+        skills: table.getChild('skills')!,
+        years: table.getChild('years_exp')!.toArray() as Int8Array,
+        comp: table.getChild('comp')!.toArray() as Int32Array,
       }
-      const sab = new SharedArrayBuffer(Uint32Array.BYTES_PER_ELEMENT * table.numRows)
+
+      // Double-buffered: worker writes one half while we read the other.
+      const sab = new SharedArrayBuffer(Uint32Array.BYTES_PER_ELEMENT * table.numRows * 2)
       indicesRef.current = new Uint32Array(sab)
 
-      const worker = new Worker(workerUrl, { type: 'module' })
+      const worker = new DataWorker()
       workerRef.current = worker
-      worker.onmessage = (e: MessageEvent<any>) => {
-        if (e.data.type === 'ready') { setReady(true); setCount(e.data.count) }
-        if (e.data.type === 'result') { setCount(e.data.count) }
+      worker.onmessage = (e: MessageEvent<ResultMessage>) => {
+        const msg = e.data
+        if (msg.version < latestVersion.current) return // stale result
+        latestVersion.current = msg.version
+        offsetRef.current = msg.offset
+        setCount(msg.count)
+        setQueryMs(msg.type === 'result' ? msg.ms : null)
+        if (msg.type === 'ready') setReady(true)
       }
-      worker.postMessage({ type: 'init', columns: colsRef.current, sab })
+      worker.postMessage({ type: 'init', buffer, sab }, [buffer])
     })()
+    return () => {
+      cancelled = true
+      workerRef.current?.terminate()
+    }
   }, [])
 
   // send queries to worker (debounced slightly)
@@ -49,25 +79,23 @@ export default function App() {
     const id = setTimeout(() => w.postMessage({ type: 'query', ...query }), 60)
     return () => clearTimeout(id)
   }, [query])
-  
 
-  const getRow = (visibleIndex: number) => {
-    if (!indicesRef.current || !colsRef.current) return null
-    const rowId = indicesRef.current[visibleIndex]
-    const c = colsRef.current as any
+  const getRow = useCallback((visibleIndex: number) => {
+    const indices = indicesRef.current
+    const c = colsRef.current
+    if (!indices || !c) return null
+    const rowId = indices[offsetRef.current + visibleIndex]
     return (
       <div className="grid-row">
-        <div><strong>{c.name[rowId]}</strong></div>
-        <div>{c.title[rowId]}</div>
-        <div>{c.location[rowId]}</div>
+        <div><strong>{c.name.get(rowId)}</strong></div>
+        <div>{c.title.get(rowId)}</div>
+        <div>{c.location.get(rowId)}</div>
         <div>{c.years[rowId]} yrs</div>
         <div>£{c.comp[rowId].toLocaleString()}</div>
-        <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.skills[rowId]}</div>
+        <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.skills.get(rowId)}</div>
       </div>
     )
-    
-  }
-  
+  }, [])
 
   return (
     <div style={{ fontFamily: 'ui-sans-serif, system-ui' }}>
@@ -75,14 +103,14 @@ export default function App() {
         <input
           placeholder="Search name/title/location/skills…"
           style={{ flex: 1 }}
-          onChange={e => setQuery(q => ({ ...q, q: e.target.value }))}
+          onChange={e => setQuery(q => ({ ...q, q: e.target.value || undefined }))}
         />
         <select onChange={e => setQuery(q => ({ ...q, location: e.target.value || undefined }))}>
           <option value="">Any location</option>
           {['Remote', 'London', 'San Francisco', 'New York', 'Berlin', 'Bangalore', 'Toronto', 'Sydney', 'Dublin']
             .map(x => <option key={x}>{x}</option>)}
         </select>
-        <select onChange={e => setQuery(q => ({ ...q, sort: e.target.value as SortKey }))}>
+        <select onChange={e => setQuery(q => ({ ...q, sort: (e.target.value || undefined) as SortKey | undefined }))}>
           <option value="">Sort</option>
           <option value="-comp">Comp (desc)</option>
           <option value="comp">Comp (asc)</option>
@@ -97,7 +125,9 @@ export default function App() {
           onChange={e => setQuery(q => ({ ...q, minExp: e.target.value ? Number(e.target.value) : undefined }))}
           style={{ width: 120 }}
         />
-        <span style={{ alignSelf: 'center', opacity: 0.7 }}>{count.toLocaleString()} matches</span>
+        <span style={{ alignSelf: 'center', opacity: 0.7 }}>
+          {count.toLocaleString()} matches{queryMs != null ? ` · ${queryMs < 1 ? '<1' : Math.round(queryMs)} ms` : ''}
+        </span>
       </header>
 
       {ready && <VirtualGrid rowCount={count} rowHeight={44} getRow={getRow} />}
